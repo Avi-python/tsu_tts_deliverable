@@ -1,0 +1,38 @@
+# Byte-compiled / optimized / Python packaging files
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+.pytest_cache/
+build/
+dist/
+
+# Editor / IDE / OS files
+.vscode/
+.vs/
+.idea/
+.DS_Store
+*.swp
+*.swo
+*~
+.ipynb_checkpoints/
+
+# Training & experiment artifacts
+/exp/
+/data/
+/raw_wav/
+/tensorboard/
+/outputs/
+/result/
+/inference_results*/
+
+# Generated audio, checkpoints, and pretrained weights
+*.wav
+*.mp3
+*.m4a
+*.aac
+*.pt
+*.tar
+*_pb2_grpc.py
+*_pb2.py
+/pretrained_models/*
