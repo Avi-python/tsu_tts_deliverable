@@ -10,7 +10,7 @@
 
 1. **模型訓練（Training, Stage 0 ～ Stage 6）**
    - 基於 **CosyVoice 3 (`Fun-CosyVoice3-0.5B`, 24 kHz)** 微調 **LLM (`CosyVoice3LM` / Qwen2-0.5B)**，保留預訓練的 **Flow Matching (`flow.pt`)** 與 **HiFi-GAN (`hift.pt`)** 進行 Zero-shot 語者音色克隆。
-   - 支援防資料洩漏切分（以 `audio_path` 分組）、去重離線特徵提取（CampPlus + SpeechTokenizerV3）、Parquet 分片打包、多卡 DDP/DeepSpeed 訓練及最佳 Checkpoint 權重平均匯出。
+   - 支援從單一 `.jsonl`（使用 `clean_text`）自動執行防資料洩漏的 **90% Train / 5% Dev / 5% Test** 切分（偵測到 `pyu` 時自動依方言分層抽樣）、離線特徵提取（CampPlus + SpeechTokenizerV3）、Parquet 分片打包、多卡 DDP/DeepSpeed 訓練及最佳 Checkpoint 權重平均匯出。
 2. **標準語音合成推論（`inference.py`）**
    - 單純執行 CosyVoice 3 TTS 推論，**不需要載入 Whisper ASR 模型**。
    - 支援單句／多句輸入、批次 `.jsonl` 合成、多隨機種子（Multi-seed）比較、以及 `[IPA]` / CMU 音標混合 Inpainting 合成。
@@ -45,7 +45,7 @@ tsu_tts_deliverable/
 │       ├── asr_engine.py                  # Whisper 16 kHz 辨識、Post-TN 正規化與 CER 計算
 │       └── pipeline.py                    # TTSFilterPipeline 閉迴路重試主流程
 ├── tools/                                 # 訓練資料前處理工具（Stage 0 ～ Stage 3）
-│   ├── prepare_formosan_jsonl.py          # Stage 0: 防洩漏切分 train/dev 與去重 unique_wavs/
+│   ├── prepare_formosan_jsonl.py          # Stage 0: 單一 JSONL 自動 90/5/5 切分 train/dev/test 與 splits/*.jsonl
 │   ├── extract_embedding.py               # Stage 1: CampPlus 192 維語者向量提取
 │   ├── extract_speech_token.py            # Stage 2: 多 GPU SpeechTokenizerV3 離散 Token 提取
 │   └── make_parquet_list.py               # Stage 3: 打包 Parquet 訓練分片
@@ -57,10 +57,11 @@ tsu_tts_deliverable/
 │       └── ds_stage2.json                 # DeepSpeed ZeRO-2 設定
 ├── docs/
 │   └── FILTER_CYCLE_STUDY.md              # 鄒語（tsu）Filter Cycle 重試機制實例研究報告
-├── tests/                                 # 單元測試（可離線驗證模型解析、CER 與重試邏輯）
+├── tests/                                 # 單元測試（可離線驗證資料切分、模型解析、CER 與重試邏輯）
 │   ├── conftest.py
 │   ├── test_asr_and_pipeline.py
-│   └── test_model_resolver.py
+│   ├── test_model_resolver.py
+│   └── test_prepare_formosan_jsonl.py
 ├── third_party/Matcha-TTS/                # Flow Matching ODE Solver 依賴
 ├── runtime/                               # FastAPI / gRPC / Triton 部署範例
 └── pretrained_models/                     # 預訓練基底模型目錄（如 Fun-CosyVoice3-0.5B-2512）
@@ -93,17 +94,25 @@ pip install -r requirements.txt
 
 完整的資料準備、去重加速技巧、中斷續訓（Resume）與模型平均匯出細節請參閱 [TRAINING_GUIDE.md](file:///mnt/usr1/avi/Projects/formosan/tsu_tts_deliverable/examples/formosan/sarcvoice3/TRAINING_GUIDE.md)。
 
-透過 [`examples/formosan/sarcvoice3/run_formosan.sh`](file:///mnt/usr1/avi/Projects/formosan/tsu_tts_deliverable/examples/formosan/sarcvoice3/run_formosan.sh) 可一鍵執行全部或指定階段（支援 `tsu`、`pyu`、`trv`）：
+透過 [`examples/formosan/sarcvoice3/run_formosan.sh`](file:///mnt/usr1/avi/Projects/formosan/tsu_tts_deliverable/examples/formosan/sarcvoice3/run_formosan.sh) 可一鍵執行全部或指定階段（支援 `tsu`、`pyu`、`trv`）。在 Stage 0 只需提供單一 `.jsonl`（讀取 `clean_text`），腳本便會自動以防洩漏方式切出 **90% Train / 5% Dev / 5% Test**（若 `lang=pyu` 會自動依方言分層），並於 `<STORAGE_ROOT>/data/<lang>/splits/` 輸出 `train.jsonl`、`dev.jsonl`、`test.jsonl`：
 
 ```bash
-# 從頭執行鄒語（tsu）資料準備（Stage 0~3）、訓練（Stage 5）與模型匯出（Stage 6）
-stage=0 stop_stage=6 langs=tsu \
+# 直接指定單一 JSONL，從頭執行鄒語（tsu）切分（90/5/5）、訓練與模型匯出
+INPUT_JSONL=/path/to/tsu.jsonl stage=0 stop_stage=6 langs=tsu \
+  bash examples/formosan/sarcvoice3/run_formosan.sh
+
+# 自訂切分比例與隨機種子（預設 DEV_RATIO=0.05 TEST_RATIO=0.05 SPLIT_SEED=42）
+INPUT_JSONL=/path/to/tsu.jsonl DEV_RATIO=0.05 TEST_RATIO=0.05 SPLIT_SEED=42 \
+  stage=0 stop_stage=3 langs=tsu \
   bash examples/formosan/sarcvoice3/run_formosan.sh
 
 # 若訓練中斷，直接執行 Stage 5~6 會自動搜尋最新的 epoch_*.pt 接續訓練並匯出
 stage=5 stop_stage=6 langs=tsu \
   bash examples/formosan/sarcvoice3/run_formosan.sh
 ```
+
+> [!NOTE]
+> Stage 0 自動產出的 `<STORAGE_ROOT>/data/<lang>/splits/test.jsonl` 可直接作為 `inference.py` 或 `inference_filter.py --input_jsonl` 的輸入，無須依賴任何外部事先切分好的 `test.jsonl`。
 
 ---
 

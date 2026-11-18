@@ -38,22 +38,15 @@ flowchart LR
 
 ---
 
-### 2. 資料集中的 4 倍 IPA 混合資料增強（`orig` + `copy_A` + `copy_B` + `copy_C`）是如何運作的？
-你指定的三個檔案：
-- 卑南語（`pyu`）：`/nfs/DGX2/Workspace/avi/fb_nchc/tts/fb_nchc_clean_filtered_pyu_merged_all.jsonl`（400,430 筆 / 127,756 個獨立音檔 / 186.07 小時）
-- 太魯閣語（`trv`）：`/nfs/DGX2/Workspace/avi/fb_nchc/tts/fb_nchc_clean_filtered_trv_merged_all.jsonl`（368,127 筆 / 107,441 個獨立音檔 / 176.22 小時）
-- 鄒語（`tsu`）：`/nfs/DGX2/Workspace/avi/fb_nchc/tts/fb_nchc_clean_filtered_tsu_merged_all.jsonl`（344,741 筆 / 92,980 個獨立音檔 / 207.83 小時）
+### 2. 資料集格式（`clean_text`）與方括號音標支援
 
-是由 `/nfs/DGX2/Workspace/avi/tts-pipeline/inpaint_ipa_augment.py` 產生的。每一個獨立音檔（`audio_path`）在 JSONL 裡最多會出現 **4 次**，對應同一個音檔但不同的文字表示（`clean_text`）：
-1. **`orig` (`_v0`)**：純族語羅馬拼音原文，例如：`pasuya aiti zou cuma tonoi toekameosʉ.`
-2. **`copy_A` (`_v1`)**：前 1/3 的詞被替換成方括號 IPA 音標，例如：`[p][a][s][u][j][a] aiti zou ...`
-3. **`copy_B` (`_v2`)**：中間 1/3 的詞被替換成方括號 IPA 音標。
-4. **`copy_C` (`_v3`)**：後 1/3 的詞被替換成方括號 IPA 音標。
-
-在 [`CosyVoice3Tokenizer`](file:///mnt/usr1/avi/Projects/formosan/tsu_tts_deliverable/cosyvoice/tokenizer/tokenizer.py#L274-L314) 中：
-- 常見 ASCII 方括號音標（如 `[p]`, `[a]`, `[s]`, `[u]`, `[j]`, `[k]`, `[t]` 等）原本就註冊為單一 Special Token。
-- 特殊 IPA 符號（如 `[ʉ]`, `[ŋ]`, `[ʔ]`, `[ɖ]`, `[ʈ]`, `[ʦ]`, `[ə]`, `[ɨ]` 等）則會被 Qwen2 的 BPE Tokenizer 拆成 `['[', '<IPA字元>', ']']`，完全不會產生 `<unk>` 未知詞，也不需要更改 Qwen2 的詞表大小（`vocab_size: 151936`），可以直接無縫訓練！
-- 這樣訓練出來的好處是：**模型同時學會「直接讀族語文字」以及「照著方括號 `[ipa]` 精準發音」**，未來推論時如果遇到罕見詞或外來語，還可以直接用 `[ipa]` 指定發音。
+Stage 0（[`tools/prepare_formosan_jsonl.py`](file:///mnt/usr1/avi/Projects/formosan/tsu_tts_deliverable/tools/prepare_formosan_jsonl.py)）只需要吃入**單一 `.jsonl` 檔案**，每筆資料包含 `audio_path`、`clean_text`（以及選填的 `duration`、`speaker`、`dialect`、`lang`）：
+- **單一乾淨對應**：一顆獨立音檔直接對應一筆標準 `clean_text` 文本，無須依賴額外的 4 倍增強或外部預先切好的 `test.jsonl`。
+- **原住民語言與方言 Instruct**：
+  - 鄒語（`tsu`）：自動套用 `You are a helpful assistant. 请用鄒語表达。<|endofprompt|>`
+  - 太魯閣語（`trv`）：自動套用 `You are a helpful assistant. 请用太魯閣語表达。<|endofprompt|>`
+  - 卑南語（`pyu`）：自動偵測 `dialect`（如 `Nanwang` / `Jianhe` / `Zhiben` / `Xiqun`），套用對應的 `请用{南王/建和/知本/西群}卑南語表达` 指令，並於切分時依方言分層抽樣。
+- **保留 `[ipa]` / 音標相容性**：在 [`CosyVoice3Tokenizer`](file:///mnt/usr1/avi/Projects/formosan/tsu_tts_deliverable/cosyvoice/tokenizer/tokenizer.py#L274-L314) 中，常見 ASCII 方括號音標與 IPA 字元皆可由 Qwen2 BPE Tokenizer 無損編碼，不會產生 `<unk>` 未知詞；因此推論時若遇到外來語或罕見詞，仍可搭配 `[ipa]` / CMU 音標修補（Inpainting）精準控制發音。
 
 ---
 
@@ -78,16 +71,17 @@ flowchart LR
   - 修改 [`cosyvoice/bin/train.py`](file:///mnt/usr1/avi/Projects/formosan/tsu_tts_deliverable/cosyvoice/bin/train.py#L135-L137)，加上 `if args.onnx_path is not None:` 保護。
   - 採用 **離線預先提取（Offline Feature Extraction）** 策略：在訓練前先把所有音檔的 `speech_token` 與 `embedding` 提取好放進 Parquet 分片中，並從訓練設定檔 [`cosyvoice3_formosan.yaml`](file:///mnt/usr1/avi/Projects/formosan/tsu_tts_deliverable/examples/formosan/sarcvoice3/conf/cosyvoice3_formosan.yaml#L169-L180) 的 `data_pipeline` 移除多餘的線上 `compute_whisper_fbank` 步驟，大幅降低訓練時的 CPU/GPU 負擔。
 
-### 3. 防止 Train/Dev/Test 資料洩漏（Data Leakage）與消除 4 倍重複特徵提取（Stage 0）
+### 3. 單一 `.jsonl` 自給自足 90/5/5 三向切分與防資料洩漏（Stage 0）
 - **問題**：
-  - 因為同一個 `audio_path` 在 `*_merged_all.jsonl` 出現 4 次（`orig`, `copy_A`, `copy_B`, `copy_C`），如果隨機切分 train/dev，同一個音檔的 `orig` 會在 train、`copy_A` 會在 dev，造成嚴重的資料洩漏。
-  - 而且如果傻傻對每一列（Row）跑 ONNX 特徵提取，同一個音檔會被重複算 4 次 `campplus.onnx` 跟 `speech_tokenizer_v3.onnx`（三種語言共 111 萬筆，但其實只有 32.8 萬個獨立音檔！）。
-- **解決方案**：撰寫了 [`tools/prepare_formosan_jsonl.py`](file:///mnt/usr1/avi/Projects/formosan/tsu_tts_deliverable/tools/prepare_formosan_jsonl.py)：
-  - 讀取 `/nfs/DGX2/Workspace/avi/fb_nchc/splits/{dev,test}.jsonl` 的官方切分，**嚴格依照 `audio_path` 分組**：
-    - 凡是屬於 `test.jsonl` 的音檔**全部剔除**（鄒語剔除了 3,409 筆 test 資料），確保未來的測試集 100% 乾淨。
-    - 同一個 `audio_path` 的所有版本（`orig`, `copy_A/B/C`）一定放在同一個 split（`train` 或 `dev`）。
-  - 產生一個去重後的 `unique_wavs/` 資料夾（以鄒語為例，344,741 列去重後只有 **92,015 個獨立音檔**）。Stage 1 和 Stage 2 **只對 `unique_wavs/` 跑一次特徵提取**（省下 75% 時間），到了 Stage 3 打包 Parquet 時再透過 `utt2wav_id` 對應回 337,851 筆訓練資料與 895 筆驗證資料！
-  - 自動補齊缺失的 `speaker` 欄位（若原資料無 `speaker`，則使用 `<lang>_<corpus>_<dialect>` 作為預設語者 ID），並為每一筆鄒語（`tsu`）資料加上 CosyVoice 3 專屬的 `instruct = "You are a helpful assistant. 请用鄒語表达。<|endofprompt|>"`（確保訓練與推論的語言指令完全一致）。
+  - 舊版腳本依賴外部目錄的 `dev.jsonl` 與 `test.jsonl`，若只提供單一 `.jsonl` 便無法自行切出測試集，且未匯出 `test.jsonl` 供後續推論評估使用。
+  - 若不同錄音唸到同一句 `clean_text`，隨機單筆切分可能會把相同句子拆進 `train` 與 `test`，造成文本洩漏。
+- **解決方案**：升級 [`tools/prepare_formosan_jsonl.py`](file:///mnt/usr1/avi/Projects/formosan/tsu_tts_deliverable/tools/prepare_formosan_jsonl.py)：
+  - **預設自給自足切分（不依賴外部 `splits_dir`）**：只須傳入 `--input_jsonl`，即以固定隨機種子（`--seed 42`）切出 **90% `train` / 5% `dev` / 5% `test`**（可透過 `--dev_ratio`、`--test_ratio` 自訂）。
+  - **群組防洩漏與 `pyu` 自動方言分層**：以 `clean_text` 為群組單位切分，確保 `train`、`dev`、`test` 之間 **0 音檔重疊、0 文本洩漏**；當偵測到 `lang == "pyu"` 時，自動依四個卑南語方言分層抽樣（`tsu` / `trv` 則直接整體切分）。
+  - **同時產出 JSONL 清單與訓練特徵清單**：
+    - 於 `<out_dir>/splits/` 輸出 `train.jsonl`、`dev.jsonl`、`test.jsonl`（其中 `test.jsonl` 可直接用於 `inference.py` 或 `inference_filter.py` 推論測試）。
+    - 於 `<out_dir>/unique_wavs/` 只收錄 `train + dev` 音檔進行 Stage 1 & 2 特徵提取（完全隔離 `test` 音檔）。
+    - 若有需要對齊特定外部切分檔，仍可透過選用參數 `--splits_dir /path/to/splits` 覆寫。
 
 ### 4. 將 `speech_tokenizer_v3.onnx` 提取速度提升 300 倍以上（Stage 1 & Stage 2）
 - **問題**：
@@ -111,7 +105,7 @@ flowchart LR
 | 檔案路徑 | 功能說明 |
 | :--- | :--- |
 | [`cosyvoice/bin/train.py`](file:///mnt/usr1/avi/Projects/formosan/tsu_tts_deliverable/cosyvoice/bin/train.py) | 主訓練程式（已修復 `args.onnx_path` 為 `None` 時的崩潰問題）。 |
-| [`tools/prepare_formosan_jsonl.py`](file:///mnt/usr1/avi/Projects/formosan/tsu_tts_deliverable/tools/prepare_formosan_jsonl.py) | **Stage 0**：依 `audio_path` 切分 `train`/`dev`（排除 `test`），並產生去重後的 `unique_wavs/`。 |
+| [`tools/prepare_formosan_jsonl.py`](file:///mnt/usr1/avi/Projects/formosan/tsu_tts_deliverable/tools/prepare_formosan_jsonl.py) | **Stage 0**：從單一 JSONL（`clean_text`）自動切分 90/5/5 `train`/`dev`/`test`（輸出 `splits/*.jsonl` 與 `unique_wavs/`）。 |
 | [`tools/extract_embedding.py`](file:///mnt/usr1/avi/Projects/formosan/tsu_tts_deliverable/tools/extract_embedding.py) | **Stage 1**：多執行緒提取 `campplus.onnx` 192 維語者與語句向量（`utt2embedding.pt`, `spk2embedding.pt`）。 |
 | [`tools/extract_speech_token.py`](file:///mnt/usr1/avi/Projects/formosan/tsu_tts_deliverable/tools/extract_speech_token.py) | **Stage 2**：多張 GPU 平行提取 `speech_tokenizer_v3.onnx` 的 25 Hz 語音 Token（`utt2speech_token.pt`）。 |
 | [`tools/make_parquet_list.py`](file:///mnt/usr1/avi/Projects/formosan/tsu_tts_deliverable/tools/make_parquet_list.py) | **Stage 3**：多程序將音檔與特徵打包成 Parquet 分片（`parquet_*.tar`, `train.data.list`, `dev.data.list`）。 |
@@ -239,7 +233,7 @@ nohup /mnt/usr1/avi/miniconda3/envs/sarcvoice/bin/python -m torch.distributed.ru
 
 ### 3. 如何從頭開始訓練另外兩個族語模型（卑南語 `pyu` 與 太魯閣語 `trv`）？
 當你想訓練 `pyu` 和 `trv` 時，只要把 `stage=0 stop_stage=6` 並指定 `langs="pyu trv"`，腳本就會自動從頭執行：
-- **Stage 0**：切分 `train`/`dev`（排除 `test`）並建立 `unique_wavs/`
+- **Stage 0**：從單一 `.jsonl` 自動依 90/5/5 切分 `train`/`dev`/`test`（若為 `pyu` 則自動依方言分層），輸出 `splits/{train,dev,test}.jsonl` 與 `unique_wavs/`（僅含 `train+dev`）
 - **Stage 1**：提取 `campplus.onnx` 語者向量
 - **Stage 2**：10 張 GPU 平行提取 `speech_tokenizer_v3.onnx` 語音 Token
 - **Stage 3**：打包 Parquet 分片（`train.data.list`, `dev.data.list`）

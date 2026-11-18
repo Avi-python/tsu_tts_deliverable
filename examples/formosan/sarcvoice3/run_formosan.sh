@@ -16,7 +16,11 @@ langs="${langs:-tsu}"  # Default to tsu first; set langs="tsu pyu trv" for all t
 export CUDA_VISIBLE_DEVICES="${CUDA_VISIBLE_DEVICES:-0,1,2,3,4,5,6,7,8,9}"
 
 DATA_JSONL_DIR="${DATA_JSONL_DIR:-/nfs/DGX2/Workspace/avi/fb_nchc/tts/v2_arpa_jsonl}"
-SPLITS_DIR="/nfs/DGX2/Workspace/avi/fb_nchc/splits"
+INPUT_JSONL_OVERRIDE="${INPUT_JSONL:-}"
+SPLITS_DIR="${SPLITS_DIR:-}"  # Optional external splits dir; leave empty for self-contained 90/5/5 split
+DEV_RATIO="${DEV_RATIO:-0.05}"
+TEST_RATIO="${TEST_RATIO:-0.05}"
+SPLIT_SEED="${SPLIT_SEED:-42}"
 STORAGE_ROOT="${STORAGE_ROOT:-/nfs/DGX2/Workspace/avi/fb_nchc/tts/sarcvoice_exp}"
 if [ -z "${PRETRAINED_DIR:-}" ]; then
   if [ -d "${REPO_ROOT}/pretrained_models/台語CV3模型" ]; then
@@ -36,10 +40,14 @@ average_num="${average_num:-5}"
 mkdir -p "${STORAGE_ROOT}/data" "${STORAGE_ROOT}/exp" "${STORAGE_ROOT}/tensorboard" "${STORAGE_ROOT}/exported_models"
 
 for lang in ${langs}; do
-  if [ -f "${DATA_JSONL_DIR}/fb_nchc_clean_${lang}_filtered_merged_all.jsonl" ]; then
+  if [ -n "${INPUT_JSONL_OVERRIDE}" ]; then
+    INPUT_JSONL="${INPUT_JSONL_OVERRIDE}"
+  elif [ -f "${DATA_JSONL_DIR}/fb_nchc_clean_${lang}_filtered_merged_all.jsonl" ]; then
     INPUT_JSONL="${DATA_JSONL_DIR}/fb_nchc_clean_${lang}_filtered_merged_all.jsonl"
-  else
+  elif [ -f "${DATA_JSONL_DIR}/fb_nchc_clean_filtered_${lang}_merged_all.jsonl" ]; then
     INPUT_JSONL="${DATA_JSONL_DIR}/fb_nchc_clean_filtered_${lang}_merged_all.jsonl"
+  else
+    INPUT_JSONL="${DATA_JSONL_DIR}/${lang}.jsonl"
   fi
   LANG_DATA_DIR="${STORAGE_ROOT}/data/${lang}"
   UNIQUE_WAV_DIR="${LANG_DATA_DIR}/unique_wavs"
@@ -51,7 +59,7 @@ for lang in ${langs}; do
   echo "   GPUs        : ${CUDA_VISIBLE_DEVICES}"
   echo "================================================================================"
 
-  # Stage 0: Prepare Kaldi directories (grouped by audio_path + deduplicated unique_wavs)
+  # Stage 0: Prepare train/dev/test splits and Kaldi directories from single JSONL
   if [ "${stage}" -le 0 ] && [ "${stop_stage}" -ge 0 ]; then
     if [ "${lang}" = "tsu" ]; then
       DEFAULT_INSTRUCT="You are a helpful assistant. 请用鄒語表达。<|endofprompt|>"
@@ -61,13 +69,20 @@ for lang in ${langs}; do
       DEFAULT_INSTRUCT="You are a helpful assistant. 请用{dialect}卑南語表达。<|endofprompt|>"
     fi
     INSTRUCT_PROMPT="${INSTRUCT_PROMPT:-${DEFAULT_INSTRUCT}}"
-    echo "[Stage 0][${lang}] Preparing train/dev splits and unique_wavs from ${INPUT_JSONL} (instruct template: ${INSTRUCT_PROMPT}) ..."
-    "${PYTHON_BIN}" "${REPO_ROOT}/tools/prepare_formosan_jsonl.py" \
-      --input_jsonl "${INPUT_JSONL}" \
-      --out_dir "${LANG_DATA_DIR}" \
-      --lang "${lang}" \
-      --splits_dir "${SPLITS_DIR}" \
+    echo "[Stage 0][${lang}] Preparing train/dev/test splits from ${INPUT_JSONL} (dev=${DEV_RATIO}, test=${TEST_RATIO}, seed=${SPLIT_SEED}) ..."
+    PREP_ARGS=(
+      --input_jsonl "${INPUT_JSONL}"
+      --out_dir "${LANG_DATA_DIR}"
+      --lang "${lang}"
+      --dev_ratio "${DEV_RATIO}"
+      --test_ratio "${TEST_RATIO}"
+      --seed "${SPLIT_SEED}"
       --instruct "${INSTRUCT_PROMPT}"
+    )
+    if [ -n "${SPLITS_DIR}" ]; then
+      PREP_ARGS+=(--splits_dir "${SPLITS_DIR}")
+    fi
+    "${PYTHON_BIN}" "${REPO_ROOT}/tools/prepare_formosan_jsonl.py" "${PREP_ARGS[@]}"
   fi
 
   # Stage 1: Extract CampPlus speaker/utterance embeddings ONCE per unique audio file
