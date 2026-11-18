@@ -22,13 +22,7 @@ DEV_RATIO="${DEV_RATIO:-0.05}"
 TEST_RATIO="${TEST_RATIO:-0.05}"
 SPLIT_SEED="${SPLIT_SEED:-42}"
 STORAGE_ROOT="${STORAGE_ROOT:-/nfs/DGX2/Workspace/avi/fb_nchc/tts/sarcvoice_exp}"
-if [ -z "${PRETRAINED_DIR:-}" ]; then
-  if [ -d "${REPO_ROOT}/pretrained_models/台語CV3模型" ]; then
-    PRETRAINED_DIR="${REPO_ROOT}/pretrained_models/台語CV3模型"
-  else
-    PRETRAINED_DIR="${REPO_ROOT}/pretrained_models/Fun-CosyVoice3-0.5B-2512"
-  fi
-fi
+PRETRAINED_DIR="${PRETRAINED_DIR:-${REPO_ROOT}/pretrained_models/Fun-CosyVoice3-0.5B-2512}"
 CONFIG_FILE="${REPO_ROOT}/examples/formosan/sarcvoice3/conf/cosyvoice3_formosan.yaml"
 DS_CONFIG="${REPO_ROOT}/examples/formosan/sarcvoice3/conf/ds_stage2.json"
 

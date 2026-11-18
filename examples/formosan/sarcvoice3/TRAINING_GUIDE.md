@@ -27,11 +27,11 @@ flowchart LR
 
 ### 1. 為什麼我們只需要訓練 `llm`（而不必重訓 `flow` 與 `hift`）？
 1. **`llm`（[`CosyVoice3LM`](file:///mnt/usr1/avi/Projects/formosan/tsu_tts_deliverable/cosyvoice/llm/llm.py#L664-L706)）—— 負責「文字/音標 $\rightarrow$ 發音與韻律」**：
-   - 底層是一顆 **Qwen2-0.5B** 語言模型（[`pretrained_models/台語CV3模型/CosyVoice-BlankEN`](file:///mnt/usr1/avi/Projects/formosan/tsu_tts_deliverable/pretrained_models/%E5%8F%B0%E8%AA%9ECV3%E6%A8%A1%E5%9E%8B/CosyVoice-BlankEN)），輸出層接上 `6561 + 200` 維的 `llm_decoder` 分類頭，用來預測每秒 25 個（25 Hz）的離散語音 Token（由 `speech_tokenizer_v3.onnx` 提取）。
+   - 底層是一顆 **Qwen2-0.5B** 語言模型（[`pretrained_models/Fun-CosyVoice3-0.5B-2512/CosyVoice-BlankEN`](file:///mnt/usr1/avi/Projects/formosan/tsu_tts_deliverable/pretrained_models/Fun-CosyVoice3-0.5B-2512/CosyVoice-BlankEN)），輸出層接上 `6561 + 200` 維的 `llm_decoder` 分類頭，用來預測每秒 25 個（25 Hz）的離散語音 Token（由 `speech_tokenizer_v3.onnx` 提取）。
    - 訓練時（見 [`CosyVoice3LM.forward`](file:///mnt/usr1/avi/Projects/formosan/tsu_tts_deliverable/cosyvoice/llm/llm.py#L387-L445)），模型會將輸入拼接為以下序列：
      $$\underbrace{[\text{SOS}]}_{\text{起始符}} + \underbrace{[\text{instruct\_token}]}_{\text{系統指令}} + \underbrace{[\text{text\_token}]}_{\text{族語文字 / IPA}} + \underbrace{[\text{TASK\_ID}]}_{\text{轉折符}} + \underbrace{[\text{speech\_token}]}_{\text{25 Hz 語音 Token 目標}} + \underbrace{[\text{EOS}]}_{\text{結束符}}$$
    - 透過計算 `speech_token` 與 `EOS` 的 Cross-Entropy Loss（並搭配 `mix_ratio: [5, 15]` 的文字與語音交錯雙流訓練），LLM 學會了**鄒語（`tsu`）、卑南語（`pyu`）、太魯閣語（`trv`）的書寫系統、IPA 音標、連音規則、重音與停頓韻律**。
-   - 我們選擇從 [`pretrained_models/台語CV3模型/llm.rl.pt`](file:///mnt/usr1/avi/Projects/formosan/tsu_tts_deliverable/pretrained_models/%E5%8F%B0%E8%AA%9ECV3%E6%A8%A1%E5%9E%8B/llm.rl.pt)（官方 `Fun-CosyVoice3-0.5B` 經過強化學習對齊的 checkpoint）作為起點進行微調（Fine-tuning），收斂速度比從頭訓練快非常多。
+   - 我們選擇從 [`pretrained_models/Fun-CosyVoice3-0.5B-2512/llm.rl.pt`](file:///mnt/usr1/avi/Projects/formosan/tsu_tts_deliverable/pretrained_models/Fun-CosyVoice3-0.5B-2512/llm.rl.pt)（官方 `Fun-CosyVoice3-0.5B` 經過強化學習對齊的 checkpoint）作為起點進行微調（Fine-tuning），收斂速度比從頭訓練快非常多。
 2. **`flow`（[`CausalMaskedDiffWithDiT`](file:///mnt/usr1/avi/Projects/formosan/tsu_tts_deliverable/cosyvoice/flow/flow.py#L284-L415)）與 `hift`（[`CausalHiFTGenerator`](file:///mnt/usr1/avi/Projects/formosan/tsu_tts_deliverable/cosyvoice/hifigan/generator.py)）—— 負責「語音 Token + 語者音色 $\rightarrow$ 聲音波形」**：
    - `flow.pt` 的工作是把 25 Hz 的語音 Token 加上 192 維的 CampPlus 語者音色向量（Speaker Embedding），還原成 50 Hz 的梅爾頻譜（Mel-spectrogram）；`hift.pt` 則把梅爾頻譜轉成 24 kHz 的 `.wav` 波形。
    - 這兩個模組處理的是純粹的物理聲學與音色複製（Zero-shot Voice Cloning），與語言本身的文法無關，因此可以直接共用預訓練好的 `flow.pt` 與 `hift.pt`。
@@ -66,7 +66,7 @@ Stage 0（[`tools/prepare_formosan_jsonl.py`](file:///mnt/usr1/avi/Projects/form
 ### 2. 修復 [`cosyvoice/bin/train.py`](file:///mnt/usr1/avi/Projects/formosan/tsu_tts_deliverable/cosyvoice/bin/train.py) 的 `onnx_path` 崩潰問題
 - **問題**：
   - 在 [`cosyvoice/bin/train.py`](file:///mnt/usr1/avi/Projects/formosan/tsu_tts_deliverable/cosyvoice/bin/train.py#L135) 第 135 行，原本寫死 `os.environ['onnx_path'] = args.onnx_path`。如果不傳 `--onnx_path`，Python 會因為把 `None` 塞進環境變數而直接崩潰（`TypeError: str expected, not NoneType`）。
-  - 但如果傳了 `--onnx_path`，[`CosyVoice3LM.__init__`](file:///mnt/usr1/avi/Projects/formosan/tsu_tts_deliverable/cosyvoice/llm/llm.py#L705-L706) 又會試圖去載入 `speech_tokenizer_v3.batch.onnx`，而 [`pretrained_models/台語CV3模型/`](file:///mnt/usr1/avi/Projects/formosan/tsu_tts_deliverable/pretrained_models/%E5%8F%B0%E8%AA%9ECV3%E6%A8%A1%E5%9E%8B) 裡面只有單筆推論用的 `speech_tokenizer_v3.onnx`，沒有 `.batch.onnx`！
+  - 但如果傳了 `--onnx_path`，[`CosyVoice3LM.__init__`](file:///mnt/usr1/avi/Projects/formosan/tsu_tts_deliverable/cosyvoice/llm/llm.py#L705-L706) 會在每個訓練程序內載入 `speech_tokenizer_v3.batch.onnx` 做線上特徵提取，增加訓練時額外的記憶體與計算負擔（部分精簡模型目錄也不一定包含 `.batch.onnx`）。
 - **解決方案**：
   - 修改 [`cosyvoice/bin/train.py`](file:///mnt/usr1/avi/Projects/formosan/tsu_tts_deliverable/cosyvoice/bin/train.py#L135-L137)，加上 `if args.onnx_path is not None:` 保護。
   - 採用 **離線預先提取（Offline Feature Extraction）** 策略：在訓練前先把所有音檔的 `speech_token` 與 `embedding` 提取好放進 Parquet 分片中，並從訓練設定檔 [`cosyvoice3_formosan.yaml`](file:///mnt/usr1/avi/Projects/formosan/tsu_tts_deliverable/examples/formosan/sarcvoice3/conf/cosyvoice3_formosan.yaml#L169-L180) 的 `data_pipeline` 移除多餘的線上 `compute_whisper_fbank` 步驟，大幅降低訓練時的 CPU/GPU 負擔。
@@ -164,7 +164,7 @@ ls -lt /nfs/DGX2/Workspace/avi/fb_nchc/tts/sarcvoice_exp/exp/tsu/llm/torch_ddp/*
 
 我已經在 [`examples/formosan/sarcvoice3/run_formosan.sh`](file:///mnt/usr1/avi/Projects/formosan/tsu_tts_deliverable/examples/formosan/sarcvoice3/run_formosan.sh#L97-L106) 的 Stage 5 寫好了**自動偵測最新 Checkpoint** 的邏輯：
 - 它會自動搜尋 `/nfs/DGX2/Workspace/avi/fb_nchc/tts/sarcvoice_exp/exp/<lang>/llm/torch_ddp/epoch_*.pt` 中時間最新的一顆檔案來續訓。
-- 如果還沒有任何 `epoch_*.pt`，它才會自動退回使用初始預訓練權重 `pretrained_models/台語CV3模型/llm.rl.pt`。
+- 如果還沒有任何 `epoch_*.pt`，它才會自動退回使用初始預訓練權重 `pretrained_models/Fun-CosyVoice3-0.5B-2512/llm.rl.pt`。
 
 #### 方法 A：一鍵自動從最新 Checkpoint 復活續訓（最推薦）
 因為鄒語（`tsu`）的 Stage 0～3 資料處理已經全部做好了，復活訓練只需要跑 `stage=5 stop_stage=6`：
@@ -202,7 +202,7 @@ export CUDA_VISIBLE_DEVICES="0,1,2,3,4,5,6,7,8,9"
 
 # 自動抓取最新的一顆 epoch_*.pt；若無則使用 llm.rl.pt
 CKPT=$(ls -t /nfs/DGX2/Workspace/avi/fb_nchc/tts/sarcvoice_exp/exp/tsu/llm/torch_ddp/epoch_*.pt 2>/dev/null | head -n 1)
-CKPT=${CKPT:-/mnt/usr1/avi/Projects/formosan/tsu_tts_deliverable/pretrained_models/台語CV3模型/llm.rl.pt}
+CKPT=${CKPT:-/mnt/usr1/avi/Projects/formosan/tsu_tts_deliverable/pretrained_models/Fun-CosyVoice3-0.5B-2512/llm.rl.pt}
 echo "Resuming from checkpoint: ${CKPT}"
 
 nohup /mnt/usr1/avi/miniconda3/envs/sarcvoice/bin/python -m torch.distributed.run \
@@ -213,7 +213,7 @@ nohup /mnt/usr1/avi/miniconda3/envs/sarcvoice/bin/python -m torch.distributed.ru
   --config examples/formosan/sarcvoice3/conf/cosyvoice3_formosan.yaml \
   --train_data /nfs/DGX2/Workspace/avi/fb_nchc/tts/sarcvoice_exp/data/tsu/train.data.list \
   --cv_data /nfs/DGX2/Workspace/avi/fb_nchc/tts/sarcvoice_exp/data/tsu/dev.data.list \
-  --qwen_pretrain_path pretrained_models/台語CV3模型/CosyVoice-BlankEN \
+  --qwen_pretrain_path pretrained_models/Fun-CosyVoice3-0.5B-2512/CosyVoice-BlankEN \
   --model llm \
   --checkpoint "${CKPT}" \
   --model_dir /nfs/DGX2/Workspace/avi/fb_nchc/tts/sarcvoice_exp/exp/tsu/llm/torch_ddp \
