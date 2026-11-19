@@ -169,7 +169,7 @@ stage=5 stop_stage=6 langs=tsu \
   --prompt_wav /nfs/DGX2/Workspace/avi/nchc-2026-cou/協作平台/wav/c19/cou_e_04842_c19.wav \
   --prompt_text "a panto pangka to kiosicumia." \
   --instruct_prefix "You are a helpful assistant. 请用鄒語表达。<|endofprompt|>" \
-  --cer_threshold 0.15 \
+  --cer_threshold 0.05 \
   --max_retries 5 \
   --base_seed 42 \
   --output_wav outputs/tsu_single.wav
@@ -217,7 +217,7 @@ stage=5 stop_stage=6 langs=tsu \
 | `--lang` | `tsu` | 語言代碼（如 `tsu`、`pyu`、`trv`） |
 | `--tts_model_dir` / `--asr_model_dir` | `None` | 直接指定 TTS / ASR 模型完整資料夾路徑（覆寫自動搜尋） |
 | `--tts_model_name` / `--asr_model_name` | `None` | 指定 `<root>/<lang>/models/` 下的子目錄名稱 |
-| `--cer_threshold` | `0.15` | 通過門檻（`CER <= cer_threshold` 即通過） |
+| `--cer_threshold` | `0.05` | 通過門檻（`CER <= cer_threshold` 即通過） |
 | `--max_retries` | `5` | 單句最多嘗試的 seed 次數 |
 | `--base_seed` | `42` | 起始 seed（第 `i` 次嘗試使用 `base_seed + i`） |
 | `--tts_mode` | `zero_shot` | TTS 推論模式（`zero_shot` 或 `instruct2`） |
@@ -242,7 +242,7 @@ from cosyvoice.filtering import FilterConfig, TTSFilterPipeline
 
 config = FilterConfig(
     lang="tsu",
-    cer_threshold=0.15,
+    cer_threshold=0.05,
     max_retries=5,
     base_seed=42,
     default_prompt_wav="/nfs/DGX2/Workspace/avi/nchc-2026-cou/協作平台/wav/c19/cou_e_04842_c19.wav",

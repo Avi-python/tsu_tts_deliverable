@@ -20,7 +20,7 @@ class FilterConfig:
     tts_model_name: Optional[str] = None
     asr_model_dir: Optional[Path] = None
     tts_model_dir: Optional[Path] = None
-    cer_threshold: float = 0.15
+    cer_threshold: float = 0.05
     max_retries: int = 5
     base_seed: int = 42
     tts_mode: Literal["zero_shot", "instruct2"] = "zero_shot"

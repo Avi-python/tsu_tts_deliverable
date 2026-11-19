@@ -93,7 +93,7 @@ def parse_args() -> argparse.Namespace:
         help="Explicit CosyVoice3 TTS model directory (overrides --tts_root / --lang)",
     )
 
-    parser.add_argument("--cer_threshold", type=float, default=0.15)
+    parser.add_argument("--cer_threshold", type=float, default=0.05)
     parser.add_argument("--max_retries", type=int, default=5)
     parser.add_argument("--base_seed", type=int, default=42)
     parser.add_argument(
